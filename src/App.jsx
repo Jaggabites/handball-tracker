@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from "react"
+import { supabase } from "./supabase.js"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, Legend } from "recharts"
 import * as XLSX from "xlsx"
-import { supabase } from "./supabase.js"
 
 const HSG_BLUE  = "#00a0e3"
 const HSG_BLACK = "#111111"
 const HSG_DARK  = "#0a0a0a"
 
+// Stimmung is now part of KPIs
 const KPI_CATEGORIES = [
   { key: "ausdauer",      label: "Ausdauer",      color: "#00a0e3", emoji: "🫁" },
   { key: "kraft",         label: "Kraft",          color: "#e33a00", emoji: "💪" },
@@ -15,6 +16,7 @@ const KPI_CATEGORIES = [
   { key: "erholung",      label: "Erholung",       color: "#7c5cbf", emoji: "😴" },
   { key: "motivation",    label: "Motivation",     color: "#e3006e", emoji: "🔥" },
   { key: "teamgeist",     label: "Teamgeist",      color: "#00d4aa", emoji: "🤝" },
+  { key: "stimmung",      label: "Stimmung",       color: "#f59e0b", emoji: "😊" },
 ]
 
 const GOAL_RATING = [
@@ -26,16 +28,20 @@ const GOAL_RATING = [
 ]
 
 const emptyForm = () => ({
-  trainerName: "",
+  trainerName:   "",
+  anzahlKinder:  "",
+  anzahlTrainer: "",
   kpis: Object.fromEntries(KPI_CATEGORIES.map(c => [c.key, 3])),
-  goalRatings: [null, null, null],
-  beobachtung: "",
-  verbesserung: "",
-  sonstiges: "",
+  goalRatings:   [null, null, null],
+  positivKinder: "",
+  negativKinder: "",
+  beobachtung:   "",
+  verbesserung:  "",
+  sonstiges:     "",
 })
 
 function ScoreSlider({ value, onChange, color }) {
-  const labels = ["", "Sehr schwach", "Schwach", "Mittel", "Gut", "Ausgezeichnet"]
+  const labels = ["", "Sehr schlecht", "Schlecht", "Okay", "Gut", "Ausgezeichnet"]
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -64,7 +70,7 @@ function GoalRatingPicker({ value, onChange }) {
           padding: "6px 12px", borderRadius: "3px", fontSize: "11px", cursor: "pointer",
           border: `2px solid ${value === r.value ? r.color : "#2a2a2a"}`,
           background: value === r.value ? r.color : "transparent",
-          color: value === r.value ? "#fff" : "#555",
+          color: value === r.value ? "#fff" : "#666",
           fontFamily: "'Barlow Condensed', sans-serif", fontWeight: "700",
           letterSpacing: "0.5px", textTransform: "uppercase", transition: "all 0.15s",
         }}>{r.label}</button>
@@ -85,13 +91,11 @@ export default function App() {
   const [aiResponse, setAiResponse] = useState("")
   const [aiLoading, setAiLoading]   = useState(false)
   const [activeKpi, setActiveKpi]   = useState("technik")
-  const [error, setError]           = useState("")
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    const { data: sd, error: sErr } = await supabase.from("sessions").select("*").order("created_at", { ascending: false })
-    if (sErr) setError("Fehler beim Laden.")
-    else setSessions(sd || [])
+    const { data: sd } = await supabase.from("sessions").select("*").order("created_at", { ascending: false })
+    if (sd) setSessions(sd)
     const { data: gd } = await supabase.from("goals").select("*").order("position")
     if (gd?.length > 0) {
       const g = ["", "", ""]
@@ -118,8 +122,10 @@ export default function App() {
     if (!form.trainerName.trim()) { alert("Bitte Trainernamen eingeben."); return }
     setSaving(true)
     const { error } = await supabase.from("sessions").insert([{
-      trainer_name: form.trainerName, date_label: today, date_iso: todayISO,
+      trainer_name: form.trainerName, anzahl_kinder: form.anzahlKinder, anzahl_trainer: form.anzahlTrainer,
+      date_label: today, date_iso: todayISO,
       kpis: form.kpis, goal_ratings: form.goalRatings,
+      positiv_kinder: form.positivKinder, negativ_kinder: form.negativKinder,
       beobachtung: form.beobachtung, verbesserung: form.verbesserung, sonstiges: form.sonstiges,
     }])
     setSaving(false)
@@ -147,7 +153,16 @@ export default function App() {
       KPI_CATEGORIES.forEach(c => {
         avg[c.label] = Math.round((group.reduce((s, x) => s + x.kpis[c.key], 0) / group.length) * 10) / 10
       })
-      return { date: group[0].date_label, dateISO, trainers: group.length, ...avg }
+      // Average Anzahl across trainers who filled it in
+      const kinderVals   = group.map(s => Number(s.anzahl_kinder)).filter(n => n > 0)
+      const trainerVals  = group.map(s => Number(s.anzahl_trainer)).filter(n => n > 0)
+      return {
+        date: group[0].date_label, dateISO,
+        trainerCount: group.length,
+        avgKinder:  kinderVals.length  ? Math.round(kinderVals.reduce((a,b)=>a+b,0)/kinderVals.length)   : null,
+        avgTrainer: trainerVals.length ? Math.round(trainerVals.reduce((a,b)=>a+b,0)/trainerVals.length) : null,
+        ...avg,
+      }
     })
 
   const radarData = KPI_CATEGORIES.map(c => {
@@ -155,8 +170,8 @@ export default function App() {
     const last = avgSessions.length > 0 ? sessionsByDate[avgSessions.at(-1).dateISO].map(s => s.kpis[c.key]) : []
     return {
       subject: c.label,
-      "Ø Gesamt":       all.length  ? Math.round(all.reduce((a,b)=>a+b,0)/all.length*10)/10  : 0,
-      "Letzte Einheit": last.length ? Math.round(last.reduce((a,b)=>a+b,0)/last.length*10)/10 : 0,
+      "Ø Gesamt":       all.length  ? Math.round(all.reduce((a,b)=>a+b,0)/all.length*10)/10   : 0,
+      "Letzte Einheit": last.length ? Math.round(last.reduce((a,b)=>a+b,0)/last.length*10)/10  : 0,
     }
   })
 
@@ -164,16 +179,19 @@ export default function App() {
     if (!sessions.length) { alert("Keine Daten."); return }
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sessions.map(s => ({
-      Datum: s.date_label, Trainer: s.trainer_name,
+      Datum: s.date, Trainer: s.trainer_name,
+      "Anzahl Kinder": s.anzahl_kinder, "Anzahl Trainer": s.anzahl_trainer,
       ...Object.fromEntries(KPI_CATEGORIES.map(c => [c.label, s.kpis[c.key]])),
       "Ziel 1": s.goal_ratings?.[0]??"", "Ziel 2": s.goal_ratings?.[1]??"", "Ziel 3": s.goal_ratings?.[2]??"",
+      "Positiv aufgefallen": s.positiv_kinder, "Negativ aufgefallen": s.negativ_kinder,
       Beobachtung: s.beobachtung, Verbesserung: s.verbesserung, Sonstiges: s.sonstiges,
     }))), "Einheiten")
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(avgSessions.map(a => ({
-      Datum: a.date, Trainer: a.trainers,
+      Datum: a.date, "Anz. Trainer-Feedbacks": a.trainerCount,
+      "Ø Kinder": a.avgKinder, "Ø Trainer": a.avgTrainer,
       ...Object.fromEntries(KPI_CATEGORIES.map(c => [c.label, a[c.label]])),
     }))), "Durchschnitte")
-    XLSX.writeFile(wb, `HSG-Neckartal-E-Jugend-${todayISO}.xlsx`)
+    XLSX.writeFile(wb, `HSG-Neckartal-${todayISO}.xlsx`)
   }
 
   const runAI = useCallback(async () => {
@@ -181,13 +199,15 @@ export default function App() {
     setAiLoading(true); setAiResponse("")
     const goalsText  = goals.filter(Boolean).map((g,i) => `Ziel ${i+1}: ${g}`).join("\n")
     const recentDays = Object.entries(sessionsByDate).sort(([a],[b])=>b.localeCompare(a)).slice(0,8)
-    const summary = recentDays.map(([, group]) => {
+    const summary = recentDays.map(([dateISO, group]) => {
+      const dayAvg = avgSessions.find(a => a.dateISO === dateISO)
       const avgKpis = KPI_CATEGORIES.map(c => `${c.label}:${Math.round(group.reduce((s,x)=>s+x.kpis[c.key],0)/group.length*10)/10}`).join(", ")
+      const kinderInfo = dayAvg?.avgKinder ? `${dayAvg.avgKinder} Kinder` : ""
       const fb = group.map(t => {
         const gr = goals.map((g,i)=>g?`"${g}"=${t.goal_ratings?.[i]??'–'}/5`:'').filter(Boolean).join(", ")
-        return `${t.trainer_name}: [${gr}] Beo:${t.beobachtung||"–"} Verbess:${t.verbesserung||"–"}`
+        return `${t.trainer_name}: [${gr}] Stimmung:${t.kpis.stimmung}/5 Beo:${t.beobachtung||"–"} Verbess:${t.verbesserung||"–"}`
       }).join(" | ")
-      return `${group[0].date_label} (${group.length} Trainer) | Ø: ${avgKpis}\n  ${fb}`
+      return `${group[0].date_label} (${group.length} Trainer${kinderInfo ? ", "+kinderInfo : ""}) | Ø: ${avgKpis}\n  ${fb}`
     }).join("\n\n")
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -197,11 +217,11 @@ export default function App() {
 `Du bist Sportanalyst für die HSG Neckartal E-Jugend (Kinder ca. 8-10 Jahre). Analysiere auf Deutsch.
 TRAININGSZIELE:\n${goalsText||"Keine Ziele definiert"}
 TRAININGSDATEN:\n${summary}
-1. **KPI-Entwicklung**: Trends über die Zeit
+1. **KPI-Entwicklung**: Trends – was verbessert sich, was stagniert? Stimmung besonders berücksichtigen.
 2. **Zielerreichung**: Bewertung der Ziele
 3. **Trainerfeedback-Konsistenz**: Unterschiede zwischen Trainern?
 4. **Stärken**: Was läuft besonders gut?
-5. **Empfehlungen**: 3 konkrete, kindgerechte Tipps.
+5. **Empfehlungen**: 3 konkrete, kindgerechte Tipps für die nächsten Einheiten.
 Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
         })
       })
@@ -209,15 +229,15 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
       setAiResponse(data.content?.[0]?.text || "Keine Antwort.")
     } catch { setAiResponse("Fehler bei der KI-Analyse.") }
     setAiLoading(false)
-  }, [sessions, goals, sessionsByDate])
+  }, [sessions, goals, sessionsByDate, avgSessions])
 
-  // shared styles
-  const card = { background: HSG_BLACK, border: "1px solid #222", borderRadius: "6px", padding: "20px", marginBottom: "12px" }
-  const secTitle = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", letterSpacing: "2px", color: "#c2c0c0", fontWeight: "700", marginBottom: "16px", textTransform: "uppercase" }
-  const fieldLabel = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", letterSpacing: "2px", color: "#c2c0c0", fontWeight: "700", display: "block", marginBottom: "6px", textTransform: "uppercase" }
-  const textInput = { width: "100%", padding: "11px 13px", background: "#1a1a1a", border: "1px solid #222", borderRadius: "4px", color: "#ddd", fontSize: "14px", fontFamily: "'Barlow',sans-serif", outline: "none", boxSizing: "border-box" }
-  const badge = (c) => ({ background: `${c}20`, color: c, padding: "2px 8px", borderRadius: "3px", fontSize: "10px", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", letterSpacing: "0.5px", display: "inline-block" })
-  const primaryBtn = (bg="#00a0e3") => ({ padding: "13px 26px", background: bg, border: "none", borderRadius: "4px", color: "#fff", cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "14px", letterSpacing: "2px", textTransform: "uppercase" })
+  // ── Shared styles ──────────────────────────────────────────────────────────
+  const card       = { background: HSG_BLACK, border: "1px solid #222", borderRadius: "6px", padding: "20px", marginBottom: "12px" }
+  const secTitle   = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", letterSpacing: "2px", color: "#999", fontWeight: "700", marginBottom: "16px", textTransform: "uppercase" }
+  const fieldLabel = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", letterSpacing: "2px", color: "#999", fontWeight: "700", display: "block", marginBottom: "6px", textTransform: "uppercase" }
+  const textInput  = { width: "100%", padding: "11px 13px", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "4px", color: "#ddd", fontSize: "14px", fontFamily: "'Barlow',sans-serif", outline: "none", boxSizing: "border-box" }
+  const badge      = (c) => ({ background: `${c}20`, color: c, padding: "2px 8px", borderRadius: "3px", fontSize: "10px", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", letterSpacing: "0.5px", display: "inline-block" })
+  const primaryBtn = (bg=HSG_BLUE) => ({ padding: "13px 26px", background: bg, border: "none", borderRadius: "4px", color: bg==="#222" ? "#555" : "#fff", cursor: bg==="#222" ? "wait" : "pointer", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "14px", letterSpacing: "2px", textTransform: "uppercase" })
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: HSG_DARK, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px" }}>
@@ -232,31 +252,26 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700;800;900&display=swap');
         *{box-sizing:border-box}
-        input::placeholder,textarea::placeholder{color:#c2c0c0}
+        input::placeholder,textarea::placeholder{color:#555}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
         .fi{animation:fadeIn 0.25s ease forwards}
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#0a0a0a}::-webkit-scrollbar-thumb{background:#222;border-radius:2px}
       `}</style>
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div style={{ background: HSG_BLACK, borderBottom: `3px solid ${HSG_BLUE}`, position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "14px", padding: "14px 20px 12px" }}>
-          {/* Logo mark */}
           <div style={{ width: "44px", height: "44px", background: HSG_BLUE, borderRadius: "4px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <span style={{ fontSize: "22px" }}>🤾</span>
           </div>
           <div>
-            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "clamp(15px,4vw,22px)", color: "#fff", letterSpacing: "-0.5px", lineHeight: 1.1 }}>
-              HSG NECKARTAL
-            </div>
-            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "600", fontSize: "10px", color: HSG_BLUE, letterSpacing: "3px", marginTop: "2px" }}>
-              E-JUGEND TRAINING
-            </div>
+            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "clamp(15px,4vw,22px)", color: "#fff", letterSpacing: "-0.5px", lineHeight: 1.1 }}>HSG NECKARTAL</div>
+            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "600", fontSize: "10px", color: HSG_BLUE, letterSpacing: "3px", marginTop: "2px" }}>E-JUGEND TRAINING</div>
           </div>
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
-            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", color: "#c2c0c0", letterSpacing: "1px" }}>{sessions.length} EINTRÄGE</div>
-            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", color: "#c2c0c0", letterSpacing: "1px" }}>{Object.keys(sessionsByDate).length} TAGE</div>
+            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", color: "#444", letterSpacing: "1px" }}>{sessions.length} EINTRÄGE</div>
+            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", color: "#444", letterSpacing: "1px" }}>{Object.keys(sessionsByDate).length} TAGE</div>
           </div>
         </div>
         <div style={{ display: "flex", borderTop: "1px solid #1a1a1a" }}>
@@ -264,7 +279,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
             <button key={id} onClick={() => setView(id)} style={{
               flex: 1, padding: "11px 4px", background: "none", border: "none",
               borderBottom: view===id ? `3px solid ${HSG_BLUE}` : "3px solid transparent",
-              color: view===id ? HSG_BLUE : "#c2c0c0", cursor: "pointer",
+              color: view===id ? HSG_BLUE : "#555", cursor: "pointer",
               fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700",
               fontSize: "clamp(9px,2.5vw,12px)", letterSpacing: "1px", transition: "all 0.15s",
             }}>{lbl}</button>
@@ -273,9 +288,8 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
       </div>
 
       <div style={{ padding: "20px", maxWidth: "800px", margin: "0 auto" }}>
-        {error && <div style={{ background: "#1a0800", border: "1px solid #e33a00", borderRadius: "4px", padding: "12px", marginBottom: "12px", fontSize: "12px", color: "#e33a00", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1px" }}>⚠ {error}</div>}
 
-        {/* FEEDBACK */}
+        {/* ── FEEDBACK ── */}
         {view==="log" && (
           <div className="fi">
             <div style={{ background: HSG_BLUE, padding: "10px 16px", borderRadius: "4px", marginBottom: "14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -283,29 +297,47 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", fontSize: "13px", color: "rgba(255,255,255,0.8)" }}>{today}</span>
             </div>
 
+            {/* Trainer + Anzahl */}
             <div style={card}>
-              <div style={secTitle}>TRAINER NAME *</div>
-              <input style={{ ...textInput, borderColor: !form.trainerName ? "#2a2a2a" : HSG_BLUE }}
+              <div style={secTitle}>TRAINER & TEILNAHME</div>
+              <label style={fieldLabel}>TRAINER NAME *</label>
+              <input style={{ ...textInput, borderColor: !form.trainerName ? "#2a2a2a" : HSG_BLUE, marginBottom: "14px" }}
                 placeholder="Vollständiger Name des Trainers"
                 value={form.trainerName}
                 onChange={e => setForm(f => ({...f, trainerName: e.target.value}))} />
-              <p style={{ fontSize: "11px", color: "#c2c0c0", marginTop: "6px" }}>Mehrere Trainer geben unabhängig Feedback — Echtzeit-Synchronisation für alle.</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                <div>
+                  <label style={fieldLabel}>ANZAHL KINDER</label>
+                  <input type="number" min="0" style={textInput} placeholder="z.B. 14"
+                    value={form.anzahlKinder} onChange={e => setForm(f => ({...f, anzahlKinder: e.target.value}))} />
+                </div>
+                <div>
+                  <label style={fieldLabel}>ANZAHL TRAINER</label>
+                  <input type="number" min="0" style={textInput} placeholder="z.B. 3"
+                    value={form.anzahlTrainer} onChange={e => setForm(f => ({...f, anzahlTrainer: e.target.value}))} />
+                </div>
+              </div>
+              <p style={{ fontSize: "11px", color: "#888", marginTop: "10px" }}>Mehrere Trainer geben unabhängig Feedback — Werte werden gemittelt.</p>
             </div>
 
+            {/* KPIs incl. Stimmung */}
             <div style={card}>
-              <div style={secTitle}>KPI BEWERTUNG</div>
+              <div style={secTitle}>KPI BEWERTUNG (1 = Sehr schlecht · 5 = Ausgezeichnet)</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
                 {KPI_CATEGORIES.map(cat => (
                   <div key={cat.key}>
-                    <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", fontSize: "14px", color: "#bbb", letterSpacing: "0.5px", marginBottom: "8px" }}>
+                    <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", fontSize: "14px", color: "#ccc", letterSpacing: "0.5px", marginBottom: "8px" }}>
                       {cat.emoji} {cat.label.toUpperCase()}
                     </div>
-                    <ScoreSlider value={form.kpis[cat.key]} onChange={v => setForm(f => ({...f, kpis:{...f.kpis,[cat.key]:v}}))} color={cat.color} />
+                    <ScoreSlider value={form.kpis[cat.key]}
+                      onChange={v => setForm(f => ({...f, kpis:{...f.kpis,[cat.key]:v}}))}
+                      color={cat.color} />
                   </div>
                 ))}
               </div>
             </div>
 
+            {/* Zielbewertung */}
             {goals.some(Boolean) && (
               <div style={card}>
                 <div style={secTitle}>ZIELBEWERTUNG</div>
@@ -322,15 +354,29 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               </div>
             )}
 
+            {/* Beobachtungen */}
             <div style={card}>
               <div style={secTitle}>BEOBACHTUNGEN & NOTIZEN</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" }}>
+                <div>
+                  <label style={fieldLabel}>✅ POSITIV AUFGEFALLEN</label>
+                  <input style={{ ...textInput, borderColor: "#1a3a1a" }} placeholder="Namen oder Beschreibung..."
+                    value={form.positivKinder} onChange={e => setForm(f => ({...f, positivKinder: e.target.value}))} />
+                </div>
+                <div>
+                  <label style={fieldLabel}>⚠ NEGATIV AUFGEFALLEN</label>
+                  <input style={{ ...textInput, borderColor: "#3a1a1a" }} placeholder="Namen oder Beschreibung..."
+                    value={form.negativKinder} onChange={e => setForm(f => ({...f, negativKinder: e.target.value}))} />
+                </div>
+              </div>
               {[
-                ["beobachtung", "BEOBACHTUNGEN", "Was ist aufgefallen? Verhalten, Konzentration, Dynamik..."],
+                ["beobachtung",  "BEOBACHTUNGEN",          "Was ist aufgefallen? Verhalten, Konzentration, Dynamik..."],
                 ["verbesserung", "VERBESSERUNGSVORSCHLÄGE", "Was sollte beim nächsten Mal anders sein?"],
               ].map(([key, lbl, ph]) => (
                 <div key={key} style={{ marginBottom: "14px" }}>
                   <label style={fieldLabel}>{lbl}</label>
-                  <input style={textInput} placeholder={ph} value={form[key]} onChange={e => setForm(f => ({...f,[key]:e.target.value}))} />
+                  <input style={textInput} placeholder={ph} value={form[key]}
+                    onChange={e => setForm(f => ({...f,[key]:e.target.value}))} />
                 </div>
               ))}
               <label style={fieldLabel}>SONSTIGES</label>
@@ -348,11 +394,11 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
           </div>
         )}
 
-        {/* ZIELE */}
+        {/* ── ZIELE ── */}
         {view==="goals" && (
           <div className="fi" style={card}>
             <div style={secTitle}>TRAININGSZIELE</div>
-            <p style={{ fontSize: "13px", color: "#c2c0c0", marginBottom: "22px", lineHeight: "1.6" }}>
+            <p style={{ fontSize: "13px", color: "#888", marginBottom: "22px", lineHeight: "1.6" }}>
               Bis zu 3 konkrete Ziele. Trainer bewerten diese nach jeder Einheit qualitativ.
             </p>
             {[0,1,2].map(i => (
@@ -369,11 +415,11 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
           </div>
         )}
 
-        {/* VERLAUF */}
+        {/* ── VERLAUF ── */}
         {view==="history" && (
           <div className="fi">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-              <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", color: "#c2c0c0", letterSpacing: "1px" }}>
+              <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", color: "#555", letterSpacing: "1px" }}>
                 {sessions.length===0 ? "NOCH KEINE DATEN" : `${sessions.length} EINTRÄGE · ${Object.keys(sessionsByDate).length} TRAININGSTAGE`}
               </span>
               <button onClick={exportExcel} style={primaryBtn("#00c896")}>⬇ EXCEL</button>
@@ -382,9 +428,11 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
             {sessions.length===0 ? (
               <div style={{ ...card, textAlign: "center", padding: "48px" }}>
                 <div style={{ fontSize: "44px", marginBottom: "12px" }}>📭</div>
-                <p style={{ color: "#c2c0c0", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "2px", fontSize: "13px" }}>NOCH KEIN FEEDBACK</p>
+                <p style={{ color: "#444", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "2px", fontSize: "13px" }}>NOCH KEIN FEEDBACK</p>
               </div>
             ) : (<>
+
+              {/* KPI Chart */}
               <div style={card}>
                 <div style={secTitle}>KPI-VERLAUF (Ø ALLER TRAINER PRO TAG)</div>
                 <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "14px" }}>
@@ -393,7 +441,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                       padding: "5px 11px", borderRadius: "3px", fontSize: "11px", cursor: "pointer",
                       border: `2px solid ${activeKpi===c.key ? c.color : "#222"}`,
                       background: activeKpi===c.key ? `${c.color}20` : "transparent",
-                      color: activeKpi===c.key ? c.color : "#c2c0c0",
+                      color: activeKpi===c.key ? c.color : "#555",
                       fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", letterSpacing: "0.5px", transition: "all 0.15s",
                     }}>{c.emoji} {c.label.toUpperCase()}</button>
                   ))}
@@ -401,76 +449,107 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={avgSessions}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-                    <XAxis dataKey="date" tick={{ fontSize:9, fill:"#c2c0c0", fontFamily:"'Barlow Condensed',sans-serif" }} />
-                    <YAxis domain={[0,5]} ticks={[1,2,3,4,5]} tick={{ fontSize:9, fill:"#c2c0c0" }} />
-                    <Tooltip contentStyle={{ background:"#111", border:`1px solid ${HSG_BLUE}40`, borderRadius:"4px", fontSize:"11px", fontFamily:"'Barlow Condensed',sans-serif" }} />
+                    <XAxis dataKey="date" tick={{ fontSize:9, fill:"#555", fontFamily:"'Barlow Condensed',sans-serif" }} />
+                    <YAxis domain={[0,5]} ticks={[1,2,3,4,5]} tick={{ fontSize:9, fill:"#555" }} />
+                    <Tooltip contentStyle={{ background:"#111", border:`1px solid ${HSG_BLUE}40`, borderRadius:"4px", fontSize:"11px" }} />
                     {KPI_CATEGORIES.filter(c=>c.key===activeKpi).map(c=>(
-                      <Line key={c.key} type="monotone" dataKey={c.label} stroke={c.color} strokeWidth={2.5} dot={{ fill:c.color, r:4, strokeWidth:0 }} activeDot={{ r:6, strokeWidth:0 }} />
+                      <Line key={c.key} type="monotone" dataKey={c.label} stroke={c.color} strokeWidth={2.5}
+                        dot={{ fill:c.color, r:4, strokeWidth:0 }} activeDot={{ r:6, strokeWidth:0 }} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
 
+              {/* Radar */}
               <div style={card}>
                 <div style={secTitle}>Ø PROFIL — GESAMT VS. LETZTE EINHEIT</div>
                 <ResponsiveContainer width="100%" height={220}>
                   <RadarChart data={radarData}>
                     <PolarGrid stroke="#222" />
-                    <PolarAngleAxis dataKey="subject" tick={{ fontSize:10, fill:"#c2c0c0", fontFamily:"'Barlow Condensed',sans-serif" }} />
+                    <PolarAngleAxis dataKey="subject" tick={{ fontSize:10, fill:"#555", fontFamily:"'Barlow Condensed',sans-serif" }} />
                     <Radar name="Ø Gesamt" dataKey="Ø Gesamt" stroke={HSG_BLUE} fill={HSG_BLUE} fillOpacity={0.15} />
                     <Radar name="Letzte Einheit" dataKey="Letzte Einheit" stroke="#f0b400" fill="#f0b400" fillOpacity={0.1} />
-                    <Legend wrapperStyle={{ fontSize:"11px", color:"#c2c0c0", fontFamily:"'Barlow Condensed',sans-serif" }} />
+                    <Legend wrapperStyle={{ fontSize:"11px", color:"#555", fontFamily:"'Barlow Condensed',sans-serif" }} />
                     <Tooltip contentStyle={{ background:"#111", border:`1px solid ${HSG_BLUE}40`, borderRadius:"4px", fontSize:"11px" }} />
                   </RadarChart>
                 </ResponsiveContainer>
               </div>
 
+              {/* Sessions list */}
               <div style={card}>
                 <div style={secTitle}>ALLE EINHEITEN</div>
-                {Object.entries(sessionsByDate).sort(([a],[b])=>b.localeCompare(a)).map(([dateISO, group]) => (
-                  <div key={dateISO} style={{ marginBottom: "20px", paddingBottom: "20px", borderBottom: "1px solid #1a1a1a" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                      <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "16px", color: "#fff" }}>{group[0].date_label}</span>
-                      <span style={badge(HSG_BLUE)}>{group.length} TRAINER</span>
-                    </div>
-                    {group.map(t => (
-                      <div key={t.id} style={{ background: "#1a1a1a", borderRadius: "4px", padding: "12px", marginBottom: "8px", borderLeft: `3px solid ${HSG_BLUE}` }}>
-                        <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", fontSize: "13px", color: HSG_BLUE, marginBottom: "8px" }}>
-                          👤 {t.trainer_name.toUpperCase()}
+                {Object.entries(sessionsByDate).sort(([a],[b])=>b.localeCompare(a)).map(([dateISO, group]) => {
+                  const dayAvg = avgSessions.find(a => a.dateISO === dateISO)
+                  return (
+                    <div key={dateISO} style={{ marginBottom: "20px", paddingBottom: "20px", borderBottom: "1px solid #1a1a1a" }}>
+
+                      {/* ── Tagesübersicht ── */}
+                      <div style={{ background: "#1a1a1a", borderRadius: "6px", padding: "12px 14px", marginBottom: "10px", borderLeft: `4px solid ${HSG_BLUE}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                          <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "16px", color: "#fff" }}>{group[0].date_label}</span>
+                          <span style={badge(HSG_BLUE)}>{group.length} TRAINER-FEEDBACKS</span>
                         </div>
-                        <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "6px" }}>
-                          {KPI_CATEGORIES.map(c => <span key={c.key} style={badge(c.color)}>{c.label.toUpperCase()} {t.kpis[c.key]}/5</span>)}
+                        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                          {dayAvg?.avgKinder != null && (
+                            <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "12px", color: "#aaa" }}>
+                              👦 <strong style={{ color: "#fff" }}>{dayAvg.avgKinder}</strong> Kinder
+                            </span>
+                          )}
+                          {dayAvg?.avgTrainer != null && (
+                            <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "12px", color: "#aaa" }}>
+                              👤 <strong style={{ color: "#fff" }}>{dayAvg.avgTrainer}</strong> Trainer
+                            </span>
+                          )}
+                          {dayAvg?.["Stimmung"] != null && (
+                            <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "12px", color: "#aaa" }}>
+                              😊 Stimmung Ø <strong style={{ color: "#f59e0b" }}>{dayAvg["Stimmung"]}/5</strong>
+                            </span>
+                          )}
                         </div>
-                        {goals.some(Boolean) && t.goal_ratings?.some(r=>r!==null) && (
-                          <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "6px" }}>
-                            {goals.map((g,i) => g && t.goal_ratings?.[i] ? (
-                              <span key={i} style={badge(GOAL_RATING.find(r=>r.value===t.goal_ratings[i])?.color||"#888")}>
-                                Z{i+1}: {GOAL_RATING.find(r=>r.value===t.goal_ratings[i])?.label?.toUpperCase()}
-                              </span>
-                            ) : null)}
-                          </div>
-                        )}
-                        {t.beobachtung  && <p style={{ fontSize: "12px", color: "#c2c0c0", margin: "4px 0 0" }}>🔍 {t.beobachtung}</p>}
-                        {t.verbesserung && <p style={{ fontSize: "12px", color: "#c2c0c0", margin: "3px 0 0" }}>💡 {t.verbesserung}</p>}
-                        {t.sonstiges    && <p style={{ fontSize: "12px", color: "#c2c0c0", margin: "3px 0 0" }}>📝 {t.sonstiges}</p>}
                       </div>
-                    ))}
-                  </div>
-                ))}
+
+                      {/* ── Pro Trainer ── */}
+                      {group.map(t => (
+                        <div key={t.id} style={{ background: "#161616", borderRadius: "4px", padding: "12px", marginBottom: "8px", borderLeft: `2px solid #2a2a2a`, marginLeft: "8px" }}>
+                          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", fontSize: "13px", color: HSG_BLUE, marginBottom: "8px" }}>
+                            👤 {t.trainer_name.toUpperCase()}
+                          </div>
+                          <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "6px" }}>
+                            {KPI_CATEGORIES.map(c => <span key={c.key} style={badge(c.color)}>{c.label.toUpperCase()} {t.kpis[c.key]}/5</span>)}
+                          </div>
+                          {goals.some(Boolean) && t.goal_ratings?.some(r=>r!==null) && (
+                            <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "6px" }}>
+                              {goals.map((g,i) => g && t.goal_ratings?.[i] ? (
+                                <span key={i} style={badge(GOAL_RATING.find(r=>r.value===t.goal_ratings[i])?.color||"#888")}>
+                                  Z{i+1}: {GOAL_RATING.find(r=>r.value===t.goal_ratings[i])?.label?.toUpperCase()}
+                                </span>
+                              ) : null)}
+                            </div>
+                          )}
+                          {t.positiv_kinder  && <p style={{ fontSize: "12px", color: "#00c896", margin: "4px 0 0" }}>✅ {t.positiv_kinder}</p>}
+                          {t.negativ_kinder  && <p style={{ fontSize: "12px", color: "#e33a00", margin: "3px 0 0" }}>⚠ {t.negativ_kinder}</p>}
+                          {t.beobachtung    && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>🔍 {t.beobachtung}</p>}
+                          {t.verbesserung   && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>💡 {t.verbesserung}</p>}
+                          {t.sonstiges      && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>📝 {t.sonstiges}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
               </div>
             </>)}
           </div>
         )}
 
-        {/* KI-ANALYSE */}
+        {/* ── KI-ANALYSE ── */}
         {view==="ai" && (
           <div className="fi" style={card}>
             <div style={secTitle}>KI-TRAININGSANALYSE</div>
-            <p style={{ fontSize: "13px", color: "#c2c0c0", marginBottom: "20px", lineHeight: "1.6" }}>
-              Claude analysiert gemittelte Bewertungen aller Trainer, Zielerreichung und qualitatives Feedback.
+            <p style={{ fontSize: "13px", color: "#888", marginBottom: "20px", lineHeight: "1.6" }}>
+              Claude analysiert gemittelte Bewertungen aller Trainer inkl. Stimmung, Zielerreichung und qualitatives Feedback.
             </p>
             {sessions.length===0 ? (
-              <p style={{ color: "#c2c0c0", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1px", fontSize: "13px" }}>📭 ERST FEEDBACK ERFASSEN.</p>
+              <p style={{ color: "#444", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1px", fontSize: "13px" }}>📭 ERST FEEDBACK ERFASSEN.</p>
             ) : (<>
               <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
                 <button onClick={runAI} disabled={aiLoading} style={primaryBtn(aiLoading ? "#222" : HSG_BLUE)}>
