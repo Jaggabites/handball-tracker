@@ -232,7 +232,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700;800;900&display=swap');
         *{box-sizing:border-box}
-        input::placeholder,textarea::placeholder{color:#333}
+        input::placeholder,textarea::placeholder{color:#c2c0c0}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
         .fi{animation:fadeIn 0.25s ease forwards}
@@ -255,8 +255,8 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
             </div>
           </div>
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
-            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", color: "#333", letterSpacing: "1px" }}>{sessions.length} EINTRÄGE</div>
-            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", color: "#333", letterSpacing: "1px" }}>{Object.keys(sessionsByDate).length} TAGE</div>
+            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", color: "#c2c0c0", letterSpacing: "1px" }}>{sessions.length} EINTRÄGE</div>
+            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", color: "#c2c0c0", letterSpacing: "1px" }}>{Object.keys(sessionsByDate).length} TAGE</div>
           </div>
         </div>
         <div style={{ display: "flex", borderTop: "1px solid #1a1a1a" }}>
@@ -289,7 +289,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                 placeholder="Vollständiger Name des Trainers"
                 value={form.trainerName}
                 onChange={e => setForm(f => ({...f, trainerName: e.target.value}))} />
-              <p style={{ fontSize: "11px", color: "#333", marginTop: "6px" }}>Mehrere Trainer geben unabhängig Feedback — Echtzeit-Synchronisation für alle.</p>
+              <p style={{ fontSize: "11px", color: "#c2c0c0", marginTop: "6px" }}>Mehrere Trainer geben unabhängig Feedback — Echtzeit-Synchronisation für alle.</p>
             </div>
 
             <div style={card}>
@@ -373,7 +373,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
         {view==="history" && (
           <div className="fi">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-              <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", color: "#333", letterSpacing: "1px" }}>
+              <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", color: "#c2c0c0", letterSpacing: "1px" }}>
                 {sessions.length===0 ? "NOCH KEINE DATEN" : `${sessions.length} EINTRÄGE · ${Object.keys(sessionsByDate).length} TRAININGSTAGE`}
               </span>
               <button onClick={exportExcel} style={primaryBtn("#00c896")}>⬇ EXCEL</button>
@@ -382,7 +382,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
             {sessions.length===0 ? (
               <div style={{ ...card, textAlign: "center", padding: "48px" }}>
                 <div style={{ fontSize: "44px", marginBottom: "12px" }}>📭</div>
-                <p style={{ color: "#333", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "2px", fontSize: "13px" }}>NOCH KEIN FEEDBACK</p>
+                <p style={{ color: "#c2c0c0", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "2px", fontSize: "13px" }}>NOCH KEIN FEEDBACK</p>
               </div>
             ) : (<>
               <div style={card}>
@@ -452,7 +452,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                         )}
                         {t.beobachtung  && <p style={{ fontSize: "12px", color: "#c2c0c0", margin: "4px 0 0" }}>🔍 {t.beobachtung}</p>}
                         {t.verbesserung && <p style={{ fontSize: "12px", color: "#c2c0c0", margin: "3px 0 0" }}>💡 {t.verbesserung}</p>}
-                        {t.sonstiges    && <p style={{ fontSize: "12px", color: "#333", margin: "3px 0 0" }}>📝 {t.sonstiges}</p>}
+                        {t.sonstiges    && <p style={{ fontSize: "12px", color: "#c2c0c0", margin: "3px 0 0" }}>📝 {t.sonstiges}</p>}
                       </div>
                     ))}
                   </div>
@@ -470,7 +470,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               Claude analysiert gemittelte Bewertungen aller Trainer, Zielerreichung und qualitatives Feedback.
             </p>
             {sessions.length===0 ? (
-              <p style={{ color: "#333", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1px", fontSize: "13px" }}>📭 ERST FEEDBACK ERFASSEN.</p>
+              <p style={{ color: "#c2c0c0", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1px", fontSize: "13px" }}>📭 ERST FEEDBACK ERFASSEN.</p>
             ) : (<>
               <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
                 <button onClick={runAI} disabled={aiLoading} style={primaryBtn(aiLoading ? "#222" : HSG_BLUE)}>
