@@ -64,7 +64,7 @@ function GoalRatingPicker({ value, onChange }) {
           padding: "6px 12px", borderRadius: "3px", fontSize: "11px", cursor: "pointer",
           border: `2px solid ${value === r.value ? r.color : "#2a2a2a"}`,
           background: value === r.value ? r.color : "transparent",
-          color: value === r.value ? "#fff" : "#555",
+          color: value === r.value ? "#fff" : "#fff",
           fontFamily: "'Barlow Condensed', sans-serif", fontWeight: "700",
           letterSpacing: "0.5px", textTransform: "uppercase", transition: "all 0.15s",
         }}>{r.label}</button>
