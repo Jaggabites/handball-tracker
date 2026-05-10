@@ -213,8 +213,8 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
 
   // shared styles
   const card = { background: HSG_BLACK, border: "1px solid #222", borderRadius: "6px", padding: "20px", marginBottom: "12px" }
-  const secTitle = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", letterSpacing: "2px", color: "#444", fontWeight: "700", marginBottom: "16px", textTransform: "uppercase" }
-  const fieldLabel = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", letterSpacing: "2px", color: "#444", fontWeight: "700", display: "block", marginBottom: "6px", textTransform: "uppercase" }
+  const secTitle = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", letterSpacing: "2px", color: "#c2c0c0", fontWeight: "700", marginBottom: "16px", textTransform: "uppercase" }
+  const fieldLabel = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", letterSpacing: "2px", color: "#c2c0c0", fontWeight: "700", display: "block", marginBottom: "6px", textTransform: "uppercase" }
   const textInput = { width: "100%", padding: "11px 13px", background: "#1a1a1a", border: "1px solid #222", borderRadius: "4px", color: "#ddd", fontSize: "14px", fontFamily: "'Barlow',sans-serif", outline: "none", boxSizing: "border-box" }
   const badge = (c) => ({ background: `${c}20`, color: c, padding: "2px 8px", borderRadius: "3px", fontSize: "10px", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", letterSpacing: "0.5px", display: "inline-block" })
   const primaryBtn = (bg="#00a0e3") => ({ padding: "13px 26px", background: bg, border: "none", borderRadius: "4px", color: "#fff", cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "14px", letterSpacing: "2px", textTransform: "uppercase" })
@@ -264,7 +264,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
             <button key={id} onClick={() => setView(id)} style={{
               flex: 1, padding: "11px 4px", background: "none", border: "none",
               borderBottom: view===id ? `3px solid ${HSG_BLUE}` : "3px solid transparent",
-              color: view===id ? HSG_BLUE : "#444", cursor: "pointer",
+              color: view===id ? HSG_BLUE : "#c2c0c0", cursor: "pointer",
               fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700",
               fontSize: "clamp(9px,2.5vw,12px)", letterSpacing: "1px", transition: "all 0.15s",
             }}>{lbl}</button>
@@ -352,7 +352,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
         {view==="goals" && (
           <div className="fi" style={card}>
             <div style={secTitle}>TRAININGSZIELE</div>
-            <p style={{ fontSize: "13px", color: "#444", marginBottom: "22px", lineHeight: "1.6" }}>
+            <p style={{ fontSize: "13px", color: "#c2c0c0", marginBottom: "22px", lineHeight: "1.6" }}>
               Bis zu 3 konkrete Ziele. Trainer bewerten diese nach jeder Einheit qualitativ.
             </p>
             {[0,1,2].map(i => (
@@ -393,7 +393,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                       padding: "5px 11px", borderRadius: "3px", fontSize: "11px", cursor: "pointer",
                       border: `2px solid ${activeKpi===c.key ? c.color : "#222"}`,
                       background: activeKpi===c.key ? `${c.color}20` : "transparent",
-                      color: activeKpi===c.key ? c.color : "#444",
+                      color: activeKpi===c.key ? c.color : "#c2c0c0",
                       fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", letterSpacing: "0.5px", transition: "all 0.15s",
                     }}>{c.emoji} {c.label.toUpperCase()}</button>
                   ))}
@@ -401,8 +401,8 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={avgSessions}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-                    <XAxis dataKey="date" tick={{ fontSize:9, fill:"#444", fontFamily:"'Barlow Condensed',sans-serif" }} />
-                    <YAxis domain={[0,5]} ticks={[1,2,3,4,5]} tick={{ fontSize:9, fill:"#444" }} />
+                    <XAxis dataKey="date" tick={{ fontSize:9, fill:"#c2c0c0", fontFamily:"'Barlow Condensed',sans-serif" }} />
+                    <YAxis domain={[0,5]} ticks={[1,2,3,4,5]} tick={{ fontSize:9, fill:"#c2c0c0" }} />
                     <Tooltip contentStyle={{ background:"#111", border:`1px solid ${HSG_BLUE}40`, borderRadius:"4px", fontSize:"11px", fontFamily:"'Barlow Condensed',sans-serif" }} />
                     {KPI_CATEGORIES.filter(c=>c.key===activeKpi).map(c=>(
                       <Line key={c.key} type="monotone" dataKey={c.label} stroke={c.color} strokeWidth={2.5} dot={{ fill:c.color, r:4, strokeWidth:0 }} activeDot={{ r:6, strokeWidth:0 }} />
@@ -416,10 +416,10 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                 <ResponsiveContainer width="100%" height={220}>
                   <RadarChart data={radarData}>
                     <PolarGrid stroke="#222" />
-                    <PolarAngleAxis dataKey="subject" tick={{ fontSize:10, fill:"#444", fontFamily:"'Barlow Condensed',sans-serif" }} />
+                    <PolarAngleAxis dataKey="subject" tick={{ fontSize:10, fill:"#c2c0c0", fontFamily:"'Barlow Condensed',sans-serif" }} />
                     <Radar name="Ø Gesamt" dataKey="Ø Gesamt" stroke={HSG_BLUE} fill={HSG_BLUE} fillOpacity={0.15} />
                     <Radar name="Letzte Einheit" dataKey="Letzte Einheit" stroke="#f0b400" fill="#f0b400" fillOpacity={0.1} />
-                    <Legend wrapperStyle={{ fontSize:"11px", color:"#444", fontFamily:"'Barlow Condensed',sans-serif" }} />
+                    <Legend wrapperStyle={{ fontSize:"11px", color:"#c2c0c0", fontFamily:"'Barlow Condensed',sans-serif" }} />
                     <Tooltip contentStyle={{ background:"#111", border:`1px solid ${HSG_BLUE}40`, borderRadius:"4px", fontSize:"11px" }} />
                   </RadarChart>
                 </ResponsiveContainer>
@@ -450,8 +450,8 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                             ) : null)}
                           </div>
                         )}
-                        {t.beobachtung  && <p style={{ fontSize: "12px", color: "#444", margin: "4px 0 0" }}>🔍 {t.beobachtung}</p>}
-                        {t.verbesserung && <p style={{ fontSize: "12px", color: "#444", margin: "3px 0 0" }}>💡 {t.verbesserung}</p>}
+                        {t.beobachtung  && <p style={{ fontSize: "12px", color: "#c2c0c0", margin: "4px 0 0" }}>🔍 {t.beobachtung}</p>}
+                        {t.verbesserung && <p style={{ fontSize: "12px", color: "#c2c0c0", margin: "3px 0 0" }}>💡 {t.verbesserung}</p>}
                         {t.sonstiges    && <p style={{ fontSize: "12px", color: "#333", margin: "3px 0 0" }}>📝 {t.sonstiges}</p>}
                       </div>
                     ))}
@@ -466,7 +466,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
         {view==="ai" && (
           <div className="fi" style={card}>
             <div style={secTitle}>KI-TRAININGSANALYSE</div>
-            <p style={{ fontSize: "13px", color: "#444", marginBottom: "20px", lineHeight: "1.6" }}>
+            <p style={{ fontSize: "13px", color: "#c2c0c0", marginBottom: "20px", lineHeight: "1.6" }}>
               Claude analysiert gemittelte Bewertungen aller Trainer, Zielerreichung und qualitatives Feedback.
             </p>
             {sessions.length===0 ? (
