@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from "react"
-import { supabase } from "./supabase.js"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, Legend } from "recharts"
 import * as XLSX from "xlsx"
 
 const HSG_BLUE  = "#00a0e3"
 const HSG_BLACK = "#111111"
 const HSG_DARK  = "#0a0a0a"
+
+const S_SESSIONS = "hsg-sessions-v3"
+const S_GOALS    = "hsg-goals-v3"
 
 // Stimmung is now part of KPIs
 const KPI_CATEGORIES = [
@@ -39,6 +41,14 @@ const emptyForm = () => ({
   verbesserung:  "",
   sonstiges:     "",
 })
+
+async function storageGet(key) {
+  try { const r = await window.storage.get(key, true); return r ? JSON.parse(r.value) : null }
+  catch { return null }
+}
+async function storageSet(key, value) {
+  try { await window.storage.set(key, JSON.stringify(value), true) } catch {}
+}
 
 function ScoreSlider({ value, onChange, color }) {
   const labels = ["", "Sehr schlecht", "Schlecht", "Okay", "Gut", "Ausgezeichnet"]
@@ -92,28 +102,15 @@ export default function App() {
   const [aiLoading, setAiLoading]   = useState(false)
   const [activeKpi, setActiveKpi]   = useState("technik")
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    const { data: sd } = await supabase.from("sessions").select("*").order("created_at", { ascending: false })
-    if (sd) setSessions(sd)
-    const { data: gd } = await supabase.from("goals").select("*").order("position")
-    if (gd?.length > 0) {
-      const g = ["", "", ""]
-      gd.forEach(row => { if (row.position < 3) g[row.position] = row.text })
-      setGoals(g)
-    }
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { loadData() }, [loadData])
-
   useEffect(() => {
-    const ch = supabase.channel("rt")
-      .on("postgres_changes", { event: "*", schema: "public", table: "sessions" }, loadData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "goals" }, loadData)
-      .subscribe()
-    return () => supabase.removeChannel(ch)
-  }, [loadData])
+    (async () => {
+      const s = await storageGet(S_SESSIONS)
+      if (s) setSessions(s)
+      const g = await storageGet(S_GOALS)
+      if (g) setGoals(g)
+      setLoading(false)
+    })()
+  }, [])
 
   const today    = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })
   const todayISO = new Date().toISOString().split("T")[0]
@@ -121,28 +118,23 @@ export default function App() {
   const saveSession = async () => {
     if (!form.trainerName.trim()) { alert("Bitte Trainernamen eingeben."); return }
     setSaving(true)
-    const { error } = await supabase.from("sessions").insert([{
-      trainer_name: form.trainerName, anzahl_kinder: form.anzahlKinder, anzahl_trainer: form.anzahlTrainer,
-      date_label: today, date_iso: todayISO,
-      kpis: form.kpis, goal_ratings: form.goalRatings,
-      positiv_kinder: form.positivKinder, negativ_kinder: form.negativKinder,
-      beobachtung: form.beobachtung, verbesserung: form.verbesserung, sonstiges: form.sonstiges,
-    }])
+    const session = { ...form, date: today, dateISO: todayISO, id: Date.now() }
+    const updated = [session, ...sessions]
+    setSessions(updated)
+    await storageSet(S_SESSIONS, updated)
     setSaving(false)
-    if (error) { alert("Fehler: " + error.message); return }
     setSaved(true); setTimeout(() => setSaved(false), 2500)
     setForm(emptyForm())
   }
 
   const saveGoals = async () => {
-    await supabase.from("goals").delete().neq("id", 0)
-    await supabase.from("goals").insert(goals.map((text, position) => ({ text, position })))
+    await storageSet(S_GOALS, goals)
     setGoalsSaved(true); setTimeout(() => setGoalsSaved(false), 2000)
   }
 
   const sessionsByDate = sessions.reduce((acc, s) => {
-    if (!acc[s.date_iso]) acc[s.date_iso] = []
-    acc[s.date_iso].push(s)
+    if (!acc[s.dateISO]) acc[s.dateISO] = []
+    acc[s.dateISO].push(s)
     return acc
   }, {})
 
@@ -154,10 +146,10 @@ export default function App() {
         avg[c.label] = Math.round((group.reduce((s, x) => s + x.kpis[c.key], 0) / group.length) * 10) / 10
       })
       // Average Anzahl across trainers who filled it in
-      const kinderVals   = group.map(s => Number(s.anzahl_kinder)).filter(n => n > 0)
-      const trainerVals  = group.map(s => Number(s.anzahl_trainer)).filter(n => n > 0)
+      const kinderVals   = group.map(s => Number(s.anzahlKinder)).filter(n => n > 0)
+      const trainerVals  = group.map(s => Number(s.anzahlTrainer)).filter(n => n > 0)
       return {
-        date: group[0].date_label, dateISO,
+        date: group[0].date, dateISO,
         trainerCount: group.length,
         avgKinder:  kinderVals.length  ? Math.round(kinderVals.reduce((a,b)=>a+b,0)/kinderVals.length)   : null,
         avgTrainer: trainerVals.length ? Math.round(trainerVals.reduce((a,b)=>a+b,0)/trainerVals.length) : null,
@@ -179,11 +171,11 @@ export default function App() {
     if (!sessions.length) { alert("Keine Daten."); return }
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sessions.map(s => ({
-      Datum: s.date, Trainer: s.trainer_name,
-      "Anzahl Kinder": s.anzahl_kinder, "Anzahl Trainer": s.anzahl_trainer,
+      Datum: s.date, Trainer: s.trainerName,
+      "Anzahl Kinder": s.anzahlKinder, "Anzahl Trainer": s.anzahlTrainer,
       ...Object.fromEntries(KPI_CATEGORIES.map(c => [c.label, s.kpis[c.key]])),
-      "Ziel 1": s.goal_ratings?.[0]??"", "Ziel 2": s.goal_ratings?.[1]??"", "Ziel 3": s.goal_ratings?.[2]??"",
-      "Positiv aufgefallen": s.positiv_kinder, "Negativ aufgefallen": s.negativ_kinder,
+      "Ziel 1": s.goalRatings?.[0]??"", "Ziel 2": s.goalRatings?.[1]??"", "Ziel 3": s.goalRatings?.[2]??"",
+      "Positiv aufgefallen": s.positivKinder, "Negativ aufgefallen": s.negativKinder,
       Beobachtung: s.beobachtung, Verbesserung: s.verbesserung, Sonstiges: s.sonstiges,
     }))), "Einheiten")
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(avgSessions.map(a => ({
@@ -204,10 +196,10 @@ export default function App() {
       const avgKpis = KPI_CATEGORIES.map(c => `${c.label}:${Math.round(group.reduce((s,x)=>s+x.kpis[c.key],0)/group.length*10)/10}`).join(", ")
       const kinderInfo = dayAvg?.avgKinder ? `${dayAvg.avgKinder} Kinder` : ""
       const fb = group.map(t => {
-        const gr = goals.map((g,i)=>g?`"${g}"=${t.goal_ratings?.[i]??'–'}/5`:'').filter(Boolean).join(", ")
-        return `${t.trainer_name}: [${gr}] Stimmung:${t.kpis.stimmung}/5 Beo:${t.beobachtung||"–"} Verbess:${t.verbesserung||"–"}`
+        const gr = goals.map((g,i)=>g?`"${g}"=${t.goalRatings?.[i]??'–'}/5`:'').filter(Boolean).join(", ")
+        return `${t.trainerName}: [${gr}] Stimmung:${t.kpis.stimmung}/5 Beo:${t.beobachtung||"–"} Verbess:${t.verbesserung||"–"}`
       }).join(" | ")
-      return `${group[0].date_label} (${group.length} Trainer${kinderInfo ? ", "+kinderInfo : ""}) | Ø: ${avgKpis}\n  ${fb}`
+      return `${group[0].date} (${group.length} Trainer${kinderInfo ? ", "+kinderInfo : ""}) | Ø: ${avgKpis}\n  ${fb}`
     }).join("\n\n")
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -275,7 +267,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
           </div>
         </div>
         <div style={{ display: "flex", borderTop: "1px solid #1a1a1a" }}>
-          {[["log","📝 FEEDBACK"],["goals","🎯 ZIELE"],["history","📈 VERLAUF"],["ai","🤖 KI-ANALYSE"]].map(([id,lbl]) => (
+          {[["log","📝 FEEDBACK"],["goals","🎯 ZIELE"],["history","📈 VERLAUF"]].map(([id,lbl]) => (
             <button key={id} onClick={() => setView(id)} style={{
               flex: 1, padding: "11px 4px", background: "none", border: "none",
               borderBottom: view===id ? `3px solid ${HSG_BLUE}` : "3px solid transparent",
@@ -486,7 +478,7 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                       {/* ── Tagesübersicht ── */}
                       <div style={{ background: "#1a1a1a", borderRadius: "6px", padding: "12px 14px", marginBottom: "10px", borderLeft: `4px solid ${HSG_BLUE}` }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                          <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "16px", color: "#fff" }}>{group[0].date_label}</span>
+                          <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "16px", color: "#fff" }}>{group[0].date}</span>
                           <span style={badge(HSG_BLUE)}>{group.length} TRAINER-FEEDBACKS</span>
                         </div>
                         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
@@ -512,22 +504,22 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                       {group.map(t => (
                         <div key={t.id} style={{ background: "#161616", borderRadius: "4px", padding: "12px", marginBottom: "8px", borderLeft: `2px solid #2a2a2a`, marginLeft: "8px" }}>
                           <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", fontSize: "13px", color: HSG_BLUE, marginBottom: "8px" }}>
-                            👤 {t.trainer_name.toUpperCase()}
+                            👤 {t.trainerName.toUpperCase()}
                           </div>
                           <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "6px" }}>
                             {KPI_CATEGORIES.map(c => <span key={c.key} style={badge(c.color)}>{c.label.toUpperCase()} {t.kpis[c.key]}/5</span>)}
                           </div>
-                          {goals.some(Boolean) && t.goal_ratings?.some(r=>r!==null) && (
+                          {goals.some(Boolean) && t.goalRatings?.some(r=>r!==null) && (
                             <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "6px" }}>
-                              {goals.map((g,i) => g && t.goal_ratings?.[i] ? (
-                                <span key={i} style={badge(GOAL_RATING.find(r=>r.value===t.goal_ratings[i])?.color||"#888")}>
-                                  Z{i+1}: {GOAL_RATING.find(r=>r.value===t.goal_ratings[i])?.label?.toUpperCase()}
+                              {goals.map((g,i) => g && t.goalRatings?.[i] ? (
+                                <span key={i} style={badge(GOAL_RATING.find(r=>r.value===t.goalRatings[i])?.color||"#888")}>
+                                  Z{i+1}: {GOAL_RATING.find(r=>r.value===t.goalRatings[i])?.label?.toUpperCase()}
                                 </span>
                               ) : null)}
                             </div>
                           )}
-                          {t.positiv_kinder  && <p style={{ fontSize: "12px", color: "#00c896", margin: "4px 0 0" }}>✅ {t.positiv_kinder}</p>}
-                          {t.negativ_kinder  && <p style={{ fontSize: "12px", color: "#e33a00", margin: "3px 0 0" }}>⚠ {t.negativ_kinder}</p>}
+                          {t.positivKinder  && <p style={{ fontSize: "12px", color: "#00c896", margin: "4px 0 0" }}>✅ {t.positivKinder}</p>}
+                          {t.negativKinder  && <p style={{ fontSize: "12px", color: "#e33a00", margin: "3px 0 0" }}>⚠ {t.negativKinder}</p>}
                           {t.beobachtung    && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>🔍 {t.beobachtung}</p>}
                           {t.verbesserung   && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>💡 {t.verbesserung}</p>}
                           {t.sonstiges      && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>📝 {t.sonstiges}</p>}
