@@ -1,15 +1,12 @@
 import { useState, useEffect, useCallback } from "react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, Legend } from "recharts"
 import * as XLSX from "xlsx"
+import { supabase } from "./supabase.js"
 
 const HSG_BLUE  = "#00a0e3"
 const HSG_BLACK = "#111111"
 const HSG_DARK  = "#0a0a0a"
 
-const S_SESSIONS = "hsg-sessions-v3"
-const S_GOALS    = "hsg-goals-v3"
-
-// Stimmung is now part of KPIs
 const KPI_CATEGORIES = [
   { key: "ausdauer",      label: "Ausdauer",      color: "#00a0e3", emoji: "🫁" },
   { key: "kraft",         label: "Kraft",          color: "#e33a00", emoji: "💪" },
@@ -33,7 +30,7 @@ const emptyForm = () => ({
   trainerName:   "",
   anzahlKinder:  "",
   anzahlTrainer: "",
-  kpis: Object.fromEntries(KPI_CATEGORIES.map(c => [c.key, 3])),
+  kpis:          Object.fromEntries(KPI_CATEGORIES.map(c => [c.key, 3])),
   goalRatings:   [null, null, null],
   positivKinder: "",
   negativKinder: "",
@@ -41,14 +38,6 @@ const emptyForm = () => ({
   verbesserung:  "",
   sonstiges:     "",
 })
-
-async function storageGet(key) {
-  try { const r = await window.storage.get(key, true); return r ? JSON.parse(r.value) : null }
-  catch { return null }
-}
-async function storageSet(key, value) {
-  try { await window.storage.set(key, JSON.stringify(value), true) } catch {}
-}
 
 function ScoreSlider({ value, onChange, color }) {
   const labels = ["", "Sehr schlecht", "Schlecht", "Okay", "Gut", "Ausgezeichnet"]
@@ -98,19 +87,37 @@ export default function App() {
   const [saving, setSaving]         = useState(false)
   const [saved, setSaved]           = useState(false)
   const [goalsSaved, setGoalsSaved] = useState(false)
-  const [aiResponse, setAiResponse] = useState("")
-  const [aiLoading, setAiLoading]   = useState(false)
   const [activeKpi, setActiveKpi]   = useState("technik")
+  const [error, setError]           = useState("")
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    setError("")
+    const { data: sd, error: sErr } = await supabase
+      .from("sessions")
+      .select("*")
+      .order("created_at", { ascending: false })
+    if (sErr) { setError("Fehler beim Laden: " + sErr.message) }
+    else setSessions(sd || [])
+
+    const { data: gd } = await supabase.from("goals").select("*").order("position")
+    if (gd?.length > 0) {
+      const g = ["", "", ""]
+      gd.forEach(row => { if (row.position < 3) g[row.position] = row.text })
+      setGoals(g)
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { loadData() }, [loadData])
 
   useEffect(() => {
-    (async () => {
-      const s = await storageGet(S_SESSIONS)
-      if (s) setSessions(s)
-      const g = await storageGet(S_GOALS)
-      if (g) setGoals(g)
-      setLoading(false)
-    })()
-  }, [])
+    const ch = supabase.channel("realtime-hsg")
+      .on("postgres_changes", { event: "*", schema: "public", table: "sessions" }, loadData)
+      .on("postgres_changes", { event: "*", schema: "public", table: "goals" }, loadData)
+      .subscribe()
+    return () => supabase.removeChannel(ch)
+  }, [loadData])
 
   const today    = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })
   const todayISO = new Date().toISOString().split("T")[0]
@@ -118,39 +125,53 @@ export default function App() {
   const saveSession = async () => {
     if (!form.trainerName.trim()) { alert("Bitte Trainernamen eingeben."); return }
     setSaving(true)
-    const session = { ...form, date: today, dateISO: todayISO, id: Date.now() }
-    const updated = [session, ...sessions]
-    setSessions(updated)
-    await storageSet(S_SESSIONS, updated)
+    const { error: err } = await supabase.from("sessions").insert([{
+      trainer_name:   form.trainerName,
+      anzahl_kinder:  form.anzahlKinder,
+      anzahl_trainer: form.anzahlTrainer,
+      date_label:     today,
+      date_iso:       todayISO,
+      kpis:           form.kpis,
+      goal_ratings:   form.goalRatings,
+      positiv_kinder: form.positivKinder,
+      negativ_kinder: form.negativKinder,
+      beobachtung:    form.beobachtung,
+      verbesserung:   form.verbesserung,
+      sonstiges:      form.sonstiges,
+    }])
     setSaving(false)
-    setSaved(true); setTimeout(() => setSaved(false), 2500)
+    if (err) { alert("Fehler beim Speichern: " + err.message); return }
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
     setForm(emptyForm())
   }
 
   const saveGoals = async () => {
-    await storageSet(S_GOALS, goals)
-    setGoalsSaved(true); setTimeout(() => setGoalsSaved(false), 2000)
+    await supabase.from("goals").delete().neq("id", 0)
+    await supabase.from("goals").insert(goals.map((text, position) => ({ text, position })))
+    setGoalsSaved(true)
+    setTimeout(() => setGoalsSaved(false), 2000)
   }
 
   const sessionsByDate = sessions.reduce((acc, s) => {
-    if (!acc[s.dateISO]) acc[s.dateISO] = []
-    acc[s.dateISO].push(s)
+    if (!acc[s.date_iso]) acc[s.date_iso] = []
+    acc[s.date_iso].push(s)
     return acc
   }, {})
 
   const avgSessions = Object.entries(sessionsByDate)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([dateISO, group]) => {
+    .map(([date_iso, group]) => {
       const avg = {}
       KPI_CATEGORIES.forEach(c => {
         avg[c.label] = Math.round((group.reduce((s, x) => s + x.kpis[c.key], 0) / group.length) * 10) / 10
       })
-      // Average Anzahl across trainers who filled it in
-      const kinderVals   = group.map(s => Number(s.anzahlKinder)).filter(n => n > 0)
-      const trainerVals  = group.map(s => Number(s.anzahlTrainer)).filter(n => n > 0)
+      const kinderVals  = group.map(s => Number(s.anzahl_kinder)).filter(n => n > 0)
+      const trainerVals = group.map(s => Number(s.anzahl_trainer)).filter(n => n > 0)
       return {
-        date: group[0].date, dateISO,
-        trainerCount: group.length,
+        date:       group[0].date_label,
+        date_iso,
+        feedbacks:  group.length,
         avgKinder:  kinderVals.length  ? Math.round(kinderVals.reduce((a,b)=>a+b,0)/kinderVals.length)   : null,
         avgTrainer: trainerVals.length ? Math.round(trainerVals.reduce((a,b)=>a+b,0)/trainerVals.length) : null,
         ...avg,
@@ -159,11 +180,11 @@ export default function App() {
 
   const radarData = KPI_CATEGORIES.map(c => {
     const all  = sessions.map(s => s.kpis[c.key])
-    const last = avgSessions.length > 0 ? sessionsByDate[avgSessions.at(-1).dateISO].map(s => s.kpis[c.key]) : []
+    const last = avgSessions.length > 0 ? sessionsByDate[avgSessions.at(-1).date_iso].map(s => s.kpis[c.key]) : []
     return {
-      subject: c.label,
+      subject:          c.label,
       "Ø Gesamt":       all.length  ? Math.round(all.reduce((a,b)=>a+b,0)/all.length*10)/10   : 0,
-      "Letzte Einheit": last.length ? Math.round(last.reduce((a,b)=>a+b,0)/last.length*10)/10  : 0,
+      "Letzte Einheit": last.length ? Math.round(last.reduce((a,b)=>a+b,0)/last.length*10)/10 : 0,
     }
   })
 
@@ -171,65 +192,27 @@ export default function App() {
     if (!sessions.length) { alert("Keine Daten."); return }
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sessions.map(s => ({
-      Datum: s.date, Trainer: s.trainerName,
-      "Anzahl Kinder": s.anzahlKinder, "Anzahl Trainer": s.anzahlTrainer,
+      Datum: s.date_label, Trainer: s.trainer_name,
+      "Anzahl Kinder": s.anzahl_kinder, "Anzahl Trainer": s.anzahl_trainer,
       ...Object.fromEntries(KPI_CATEGORIES.map(c => [c.label, s.kpis[c.key]])),
-      "Ziel 1": s.goalRatings?.[0]??"", "Ziel 2": s.goalRatings?.[1]??"", "Ziel 3": s.goalRatings?.[2]??"",
-      "Positiv aufgefallen": s.positivKinder, "Negativ aufgefallen": s.negativKinder,
+      "Ziel 1": s.goal_ratings?.[0]??"", "Ziel 2": s.goal_ratings?.[1]??"", "Ziel 3": s.goal_ratings?.[2]??"",
+      "Positiv aufgefallen": s.positiv_kinder, "Negativ aufgefallen": s.negativ_kinder,
       Beobachtung: s.beobachtung, Verbesserung: s.verbesserung, Sonstiges: s.sonstiges,
     }))), "Einheiten")
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(avgSessions.map(a => ({
-      Datum: a.date, "Anz. Trainer-Feedbacks": a.trainerCount,
-      "Ø Kinder": a.avgKinder, "Ø Trainer": a.avgTrainer,
+      Datum: a.date, Feedbacks: a.feedbacks, "Ø Kinder": a.avgKinder, "Ø Trainer": a.avgTrainer,
       ...Object.fromEntries(KPI_CATEGORIES.map(c => [c.label, a[c.label]])),
     }))), "Durchschnitte")
     XLSX.writeFile(wb, `HSG-Neckartal-${todayISO}.xlsx`)
   }
 
-  const runAI = useCallback(async () => {
-    if (!sessions.length) return
-    setAiLoading(true); setAiResponse("")
-    const goalsText  = goals.filter(Boolean).map((g,i) => `Ziel ${i+1}: ${g}`).join("\n")
-    const recentDays = Object.entries(sessionsByDate).sort(([a],[b])=>b.localeCompare(a)).slice(0,8)
-    const summary = recentDays.map(([dateISO, group]) => {
-      const dayAvg = avgSessions.find(a => a.dateISO === dateISO)
-      const avgKpis = KPI_CATEGORIES.map(c => `${c.label}:${Math.round(group.reduce((s,x)=>s+x.kpis[c.key],0)/group.length*10)/10}`).join(", ")
-      const kinderInfo = dayAvg?.avgKinder ? `${dayAvg.avgKinder} Kinder` : ""
-      const fb = group.map(t => {
-        const gr = goals.map((g,i)=>g?`"${g}"=${t.goalRatings?.[i]??'–'}/5`:'').filter(Boolean).join(", ")
-        return `${t.trainerName}: [${gr}] Stimmung:${t.kpis.stimmung}/5 Beo:${t.beobachtung||"–"} Verbess:${t.verbesserung||"–"}`
-      }).join(" | ")
-      return `${group[0].date} (${group.length} Trainer${kinderInfo ? ", "+kinderInfo : ""}) | Ø: ${avgKpis}\n  ${fb}`
-    }).join("\n\n")
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1200,
-          messages: [{ role: "user", content:
-`Du bist Sportanalyst für die HSG Neckartal E-Jugend (Kinder ca. 8-10 Jahre). Analysiere auf Deutsch.
-TRAININGSZIELE:\n${goalsText||"Keine Ziele definiert"}
-TRAININGSDATEN:\n${summary}
-1. **KPI-Entwicklung**: Trends – was verbessert sich, was stagniert? Stimmung besonders berücksichtigen.
-2. **Zielerreichung**: Bewertung der Ziele
-3. **Trainerfeedback-Konsistenz**: Unterschiede zwischen Trainern?
-4. **Stärken**: Was läuft besonders gut?
-5. **Empfehlungen**: 3 konkrete, kindgerechte Tipps für die nächsten Einheiten.
-Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
-        })
-      })
-      const data = await res.json()
-      setAiResponse(data.content?.[0]?.text || "Keine Antwort.")
-    } catch { setAiResponse("Fehler bei der KI-Analyse.") }
-    setAiLoading(false)
-  }, [sessions, goals, sessionsByDate, avgSessions])
-
-  // ── Shared styles ──────────────────────────────────────────────────────────
+  // ── Styles ─────────────────────────────────────────────────────────────────
   const card       = { background: HSG_BLACK, border: "1px solid #222", borderRadius: "6px", padding: "20px", marginBottom: "12px" }
   const secTitle   = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "11px", letterSpacing: "2px", color: "#999", fontWeight: "700", marginBottom: "16px", textTransform: "uppercase" }
   const fieldLabel = { fontFamily: "'Barlow Condensed',sans-serif", fontSize: "10px", letterSpacing: "2px", color: "#999", fontWeight: "700", display: "block", marginBottom: "6px", textTransform: "uppercase" }
   const textInput  = { width: "100%", padding: "11px 13px", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "4px", color: "#ddd", fontSize: "14px", fontFamily: "'Barlow',sans-serif", outline: "none", boxSizing: "border-box" }
   const badge      = (c) => ({ background: `${c}20`, color: c, padding: "2px 8px", borderRadius: "3px", fontSize: "10px", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", letterSpacing: "0.5px", display: "inline-block" })
-  const primaryBtn = (bg=HSG_BLUE) => ({ padding: "13px 26px", background: bg, border: "none", borderRadius: "4px", color: bg==="#222" ? "#555" : "#fff", cursor: bg==="#222" ? "wait" : "pointer", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "14px", letterSpacing: "2px", textTransform: "uppercase" })
+  const primaryBtn = (bg=HSG_BLUE, disabled=false) => ({ padding: "13px 26px", background: bg, border: "none", borderRadius: "4px", color: disabled ? "#555" : "#fff", cursor: disabled ? "wait" : "pointer", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "14px", letterSpacing: "2px", textTransform: "uppercase" })
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: HSG_DARK, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px" }}>
@@ -273,13 +256,18 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               borderBottom: view===id ? `3px solid ${HSG_BLUE}` : "3px solid transparent",
               color: view===id ? HSG_BLUE : "#555", cursor: "pointer",
               fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700",
-              fontSize: "clamp(9px,2.5vw,12px)", letterSpacing: "1px", transition: "all 0.15s",
+              fontSize: "clamp(10px,2.5vw,13px)", letterSpacing: "1px", transition: "all 0.15s",
             }}>{lbl}</button>
           ))}
         </div>
       </div>
 
       <div style={{ padding: "20px", maxWidth: "800px", margin: "0 auto" }}>
+        {error && (
+          <div style={{ background: "#1a0800", border: "1px solid #e33a00", borderRadius: "4px", padding: "12px", marginBottom: "12px", fontSize: "12px", color: "#e33a00", fontFamily: "'Barlow Condensed',sans-serif" }}>
+            ⚠ {error}
+          </div>
+        )}
 
         {/* ── FEEDBACK ── */}
         {view==="log" && (
@@ -289,7 +277,6 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", fontSize: "13px", color: "rgba(255,255,255,0.8)" }}>{today}</span>
             </div>
 
-            {/* Trainer + Anzahl */}
             <div style={card}>
               <div style={secTitle}>TRAINER & TEILNAHME</div>
               <label style={fieldLabel}>TRAINER NAME *</label>
@@ -312,7 +299,6 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               <p style={{ fontSize: "11px", color: "#888", marginTop: "10px" }}>Mehrere Trainer geben unabhängig Feedback — Werte werden gemittelt.</p>
             </div>
 
-            {/* KPIs incl. Stimmung */}
             <div style={card}>
               <div style={secTitle}>KPI BEWERTUNG (1 = Sehr schlecht · 5 = Ausgezeichnet)</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -329,13 +315,12 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               </div>
             </div>
 
-            {/* Zielbewertung */}
             {goals.some(Boolean) && (
               <div style={card}>
                 <div style={secTitle}>ZIELBEWERTUNG</div>
                 {goals.map((g, i) => g ? (
                   <div key={i} style={{ marginBottom: "18px" }}>
-                    <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "12px", color: HSG_BLUE, fontWeight: "700", marginBottom: "8px", letterSpacing: "0.5px" }}>
+                    <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "12px", color: HSG_BLUE, fontWeight: "700", marginBottom: "8px" }}>
                       ZIEL {i+1}: {g.toUpperCase()}
                     </div>
                     <GoalRatingPicker value={form.goalRatings[i]} onChange={v => {
@@ -346,7 +331,6 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               </div>
             )}
 
-            {/* Beobachtungen */}
             <div style={card}>
               <div style={secTitle}>BEOBACHTUNGEN & NOTIZEN</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" }}>
@@ -378,8 +362,9 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
             </div>
 
             <button onClick={saveSession} disabled={saving} style={{
-              ...primaryBtn(saved ? "#00c896" : HSG_BLUE), width: "100%", padding: "16px",
-              fontSize: "15px", boxShadow: `0 4px 20px ${HSG_BLUE}30`,
+              ...primaryBtn(saved ? "#00c896" : HSG_BLUE, saving),
+              width: "100%", padding: "16px", fontSize: "15px",
+              boxShadow: `0 4px 20px ${HSG_BLUE}30`,
             }}>
               {saving ? "WIRD GESPEICHERT…" : saved ? "✓ FEEDBACK GESPEICHERT" : "FEEDBACK SPEICHERN"}
             </button>
@@ -424,7 +409,6 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
               </div>
             ) : (<>
 
-              {/* KPI Chart */}
               <div style={card}>
                 <div style={secTitle}>KPI-VERLAUF (Ø ALLER TRAINER PRO TAG)</div>
                 <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "14px" }}>
@@ -452,7 +436,6 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                 </ResponsiveContainer>
               </div>
 
-              {/* Radar */}
               <div style={card}>
                 <div style={secTitle}>Ø PROFIL — GESAMT VS. LETZTE EINHEIT</div>
                 <ResponsiveContainer width="100%" height={220}>
@@ -467,21 +450,18 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                 </ResponsiveContainer>
               </div>
 
-              {/* Sessions list */}
               <div style={card}>
                 <div style={secTitle}>ALLE EINHEITEN</div>
-                {Object.entries(sessionsByDate).sort(([a],[b])=>b.localeCompare(a)).map(([dateISO, group]) => {
-                  const dayAvg = avgSessions.find(a => a.dateISO === dateISO)
+                {Object.entries(sessionsByDate).sort(([a],[b])=>b.localeCompare(a)).map(([date_iso, group]) => {
+                  const dayAvg = avgSessions.find(a => a.date_iso === date_iso)
                   return (
-                    <div key={dateISO} style={{ marginBottom: "20px", paddingBottom: "20px", borderBottom: "1px solid #1a1a1a" }}>
-
-                      {/* ── Tagesübersicht ── */}
+                    <div key={date_iso} style={{ marginBottom: "20px", paddingBottom: "20px", borderBottom: "1px solid #1a1a1a" }}>
                       <div style={{ background: "#1a1a1a", borderRadius: "6px", padding: "12px 14px", marginBottom: "10px", borderLeft: `4px solid ${HSG_BLUE}` }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                          <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "16px", color: "#fff" }}>{group[0].date}</span>
+                          <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "900", fontSize: "16px", color: "#fff" }}>{group[0].date_label}</span>
                           <span style={badge(HSG_BLUE)}>{group.length} TRAINER-FEEDBACKS</span>
                         </div>
-                        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
                           {dayAvg?.avgKinder != null && (
                             <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: "12px", color: "#aaa" }}>
                               👦 <strong style={{ color: "#fff" }}>{dayAvg.avgKinder}</strong> Kinder
@@ -500,26 +480,25 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                         </div>
                       </div>
 
-                      {/* ── Pro Trainer ── */}
                       {group.map(t => (
-                        <div key={t.id} style={{ background: "#161616", borderRadius: "4px", padding: "12px", marginBottom: "8px", borderLeft: `2px solid #2a2a2a`, marginLeft: "8px" }}>
+                        <div key={t.id} style={{ background: "#161616", borderRadius: "4px", padding: "12px", marginBottom: "8px", borderLeft: "2px solid #2a2a2a", marginLeft: "8px" }}>
                           <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: "700", fontSize: "13px", color: HSG_BLUE, marginBottom: "8px" }}>
-                            👤 {t.trainerName.toUpperCase()}
+                            👤 {t.trainer_name.toUpperCase()}
                           </div>
                           <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "6px" }}>
                             {KPI_CATEGORIES.map(c => <span key={c.key} style={badge(c.color)}>{c.label.toUpperCase()} {t.kpis[c.key]}/5</span>)}
                           </div>
-                          {goals.some(Boolean) && t.goalRatings?.some(r=>r!==null) && (
+                          {goals.some(Boolean) && t.goal_ratings?.some(r=>r!==null) && (
                             <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "6px" }}>
-                              {goals.map((g,i) => g && t.goalRatings?.[i] ? (
-                                <span key={i} style={badge(GOAL_RATING.find(r=>r.value===t.goalRatings[i])?.color||"#888")}>
-                                  Z{i+1}: {GOAL_RATING.find(r=>r.value===t.goalRatings[i])?.label?.toUpperCase()}
+                              {goals.map((g,i) => g && t.goal_ratings?.[i] ? (
+                                <span key={i} style={badge(GOAL_RATING.find(r=>r.value===t.goal_ratings[i])?.color||"#888")}>
+                                  Z{i+1}: {GOAL_RATING.find(r=>r.value===t.goal_ratings[i])?.label?.toUpperCase()}
                                 </span>
                               ) : null)}
                             </div>
                           )}
-                          {t.positivKinder  && <p style={{ fontSize: "12px", color: "#00c896", margin: "4px 0 0" }}>✅ {t.positivKinder}</p>}
-                          {t.negativKinder  && <p style={{ fontSize: "12px", color: "#e33a00", margin: "3px 0 0" }}>⚠ {t.negativKinder}</p>}
+                          {t.positiv_kinder && <p style={{ fontSize: "12px", color: "#00c896", margin: "4px 0 0" }}>✅ {t.positiv_kinder}</p>}
+                          {t.negativ_kinder && <p style={{ fontSize: "12px", color: "#e33a00", margin: "3px 0 0" }}>⚠ {t.negativ_kinder}</p>}
                           {t.beobachtung    && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>🔍 {t.beobachtung}</p>}
                           {t.verbesserung   && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>💡 {t.verbesserung}</p>}
                           {t.sonstiges      && <p style={{ fontSize: "12px", color: "#888", margin: "3px 0 0" }}>📝 {t.sonstiges}</p>}
@@ -529,31 +508,6 @@ Antworte präzise, motivierend, auf die Altersgruppe zugeschnitten.` }]
                   )
                 })}
               </div>
-            </>)}
-          </div>
-        )}
-
-        {/* ── KI-ANALYSE ── */}
-        {view==="ai" && (
-          <div className="fi" style={card}>
-            <div style={secTitle}>KI-TRAININGSANALYSE</div>
-            <p style={{ fontSize: "13px", color: "#888", marginBottom: "20px", lineHeight: "1.6" }}>
-              Claude analysiert gemittelte Bewertungen aller Trainer inkl. Stimmung, Zielerreichung und qualitatives Feedback.
-            </p>
-            {sessions.length===0 ? (
-              <p style={{ color: "#444", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1px", fontSize: "13px" }}>📭 ERST FEEDBACK ERFASSEN.</p>
-            ) : (<>
-              <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
-                <button onClick={runAI} disabled={aiLoading} style={primaryBtn(aiLoading ? "#222" : HSG_BLUE)}>
-                  {aiLoading ? "⏳ ANALYSE LÄUFT…" : "🤖 ANALYSE STARTEN"}
-                </button>
-                <button onClick={exportExcel} style={primaryBtn("#00c896")}>⬇ EXCEL EXPORT</button>
-              </div>
-              {aiResponse && (
-                <div style={{ background: "#0d0d0d", border: `1px solid ${HSG_BLUE}30`, borderLeft: `4px solid ${HSG_BLUE}`, borderRadius: "4px", padding: "20px" }}>
-                  <p style={{ whiteSpace: "pre-wrap", lineHeight: "1.75", fontSize: "14px", color: "#aaa", fontFamily: "'Barlow',sans-serif", margin: 0 }}>{aiResponse}</p>
-                </div>
-              )}
             </>)}
           </div>
         )}
