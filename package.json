@@ -1,5 +1,5 @@
 {
-  "name": "handball-tracker",
+  "name": "hsg-neckartal-tracker",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -9,9 +9,9 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
-    "recharts": "^2.10.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "recharts": "^2.10.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
